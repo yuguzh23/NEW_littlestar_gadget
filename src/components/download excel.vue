@@ -162,8 +162,8 @@ defineExpose({
 
 <style scoped>
 .download-container {
-  margin: 10px 0;
-  padding: 10px;
+  /*margin: 10px 0;
+  padding: 10px;*/
   border-radius: 8px;
   background-color: #f8f9fa;
 }

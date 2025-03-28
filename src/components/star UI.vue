@@ -3,7 +3,29 @@ import { ref, onMounted } from 'vue';
 import DownloadExcel from './download excel.vue';
 import Setting from './setting.vue';
 import SuccessPrompt from './SuccessPrompt.vue';
+import OutputWord from './output word.vue';
 import * as XLSX from 'xlsx';
+
+// Cookie操作函數
+const setCookie = (name, value, days = 365) => {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    const expires = "; expires=" + date.toUTCString();
+    // 确保布尔值正确转换为字符串
+    const stringValue = typeof value === 'boolean' ? String(value) : (value || "");
+    document.cookie = name + "=" + stringValue + expires + "; path=/";
+};
+
+const getCookie = (name) => {
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for(let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
+};
 
 // 狀態管理
 const file = ref(null); // 存儲檔案物件
@@ -17,11 +39,12 @@ const yunCount = ref(0); // 雲科場的志工數量
 const linCount = ref(0); // 林內場的志工數量
 const isLoading = ref(false); // 是否正在加載數據
 const downloadExcelRef = ref(null); // 下載Excel組件的引用
-const googleSheetId = ref(''); // Google試算表ID
+const outputWordRef = ref(null); // 匯出Word組件的引用
+const googleSheetId = ref(getCookie('googleSheetId') || ''); // 從Cookie讀取Google試算表ID
 const showSettingsModal = ref(false); // 控制設定模態視窗的顯示
-const autoClosePrompt = ref(true); // 控制提示是否自動關閉
-const excelDateRange = ref('C1~N1'); // Excel日期位置範圍
-const volunteerRowRange = ref('6~55'); // 志工位置範圍
+const autoClosePrompt = ref(getCookie('autoClosePrompt') === 'false' ? false : true); // 從Cookie讀取自動關閉提示設定
+const excelDateRange = ref(getCookie('excelDateRange') || 'C1~N1'); // 從Cookie讀取Excel日期位置範圍
+const volunteerRowRange = ref(getCookie('volunteerRowRange') || '6~55'); // 從Cookie讀取志工位置範圍
 
 // Checkbox 狀態
 const showName = ref(true); // 是否顯示名字
@@ -31,6 +54,10 @@ const showCode = ref(true); // 是否顯示代號
 // 篩選器 Checkbox 狀態
 const showYunFilter = ref(false); // 是否顯示雲科場篩選
 const showLinFilter = ref(false); // 是否顯示林內場篩選
+
+// 場地選擇狀態
+const selectedVenue = ref(''); // 選擇的場地
+const isPreTraining = ref(false); // 是否為前訓
 
 // Excel 日期轉換函數
 const excelDateToJSDate = (excelDate) => {
@@ -187,6 +214,12 @@ const successMessage = ref('');
 
 // 處理設定保存事件
 const handleSaveSettings = () => {
+    // 將所有設定保存到Cookie
+    setCookie('googleSheetId', googleSheetId.value);
+    setCookie('excelDateRange', excelDateRange.value);
+    setCookie('volunteerRowRange', volunteerRowRange.value);
+    setCookie('autoClosePrompt', autoClosePrompt.value);
+    
     // 顯示儲存成功提示
     successMessage.value = '設定儲存成功';
     showSuccessPrompt.value = true;
@@ -196,6 +229,85 @@ const handleSaveSettings = () => {
         setTimeout(() => {
             showSuccessPrompt.value = false;
         }, 3000);
+    }
+};
+
+// 處理成功事件
+const handleSuccess = (message) => {
+    successMessage.value = message;
+    showSuccessPrompt.value = true;
+    if (autoClosePrompt.value) {
+        setTimeout(() => {
+            showSuccessPrompt.value = false;
+        }, 2000);
+    }
+};
+
+// 匯出簽到表
+const exportAttendanceSheet = () => {
+    if (outputWordRef.value && file.value) {
+        // 讀取原始Excel檔案，確保不受顯示選項影響
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+            
+            // 找到選擇的日期索引
+            const dateIndex = dates.value.indexOf(selectedDate.value) + 2;
+            
+            // 解析志工位置範圍
+            const rowRange = volunteerRowRange.value.split('~');
+            let startRow = 5;
+            let endRow = 55;
+            
+            if (rowRange.length === 2) {
+                startRow = parseInt(rowRange[0]) - 1; // 轉為0-based索引
+                endRow = parseInt(rowRange[1]);
+            }
+            
+            // 提取完整的志工資訊（不受顯示選項影響）
+            let fullYunVolunteers = '';
+            let fullLinVolunteers = '';
+            
+            // 遍歷資料，提取志工資訊
+            for (let i = startRow; i < endRow; i++) {
+                const row = sheetData[i]; // 取得每一列資料
+                if (!row) continue; // 若該行無資料，跳過
+                
+                const volunteerName = row[0] || '未命名'; // 志工名字
+                const volunteerNickname = row[1] || '無綽號'; // 志工綽號
+                const volunteerCode = row[dateIndex]; // 取得志工代號
+                
+                // 完整的志工資訊格式：姓名(綽號) - 代號
+                const fullVolunteerInfo = `${volunteerName}(${volunteerNickname}) - ${volunteerCode}`;
+                
+                // 判斷志工代號並將其歸類
+                if (yunCodes.includes(volunteerCode)) {
+                    fullYunVolunteers += `${fullVolunteerInfo}\n`; // 加入雲科場志工列表
+                }
+                if (linCodes.includes(volunteerCode)) {
+                    fullLinVolunteers += `${fullVolunteerInfo}\n`; // 加入林內場志工列表
+                }
+            }
+            
+            // 根據選擇的場地篩選志工名單
+            let selectedYunVolunteers = selectedVenue.value === '雲科場' ? fullYunVolunteers : '';
+            let selectedLinVolunteers = selectedVenue.value === '林內場' ? fullLinVolunteers : '';
+            
+            // 匯出簽到表
+            outputWordRef.value.exportAttendanceSheet(
+                selectedDate.value,
+                selectedYunVolunteers,
+                selectedLinVolunteers,
+                selectedVenue.value,
+                isPreTraining.value
+            );
+        };
+        reader.readAsArrayBuffer(file.value);
+    } else if (!file.value) {
+        alert('請先上傳班表或使用自動選擇班表功能');
     }
 };
 
@@ -210,7 +322,13 @@ const updateFilteredVolunteers = () => {
             .split('\n')
             .filter(volunteer => {
                 if (!filterText.value) return true; // 沒有篩選條件時，顯示所有志工
-                return !filterText.value.split('\n').some(removeName => volunteer.includes(removeName.trim()));
+                return !filterText.value.split('\n').some(removeName => {
+                    const trimmedName = removeName.trim();
+                    // 如果篩選條件少於2個字符，則不進行篩選
+                    if (trimmedName.length < 2) return false;
+                    // 至少需要兩個連續字符匹配才進行篩選
+                    return volunteer.includes(trimmedName);
+                });
             }));
     }
 
@@ -220,7 +338,13 @@ const updateFilteredVolunteers = () => {
             .split('\n')
             .filter(volunteer => {
                 if (!filterText.value) return true;
-                return !filterText.value.split('\n').some(removeName => volunteer.includes(removeName.trim()));
+                return !filterText.value.split('\n').some(removeName => {
+                    const trimmedName = removeName.trim();
+                    // 如果篩選條件少於2個字符，則不進行篩選
+                    if (trimmedName.length < 2) return false;
+                    // 至少需要兩個連續字符匹配才進行篩選
+                    return volunteer.includes(trimmedName);
+                });
             }));
     }
 
@@ -314,6 +438,7 @@ const autoSelectSchedule = async () => {
     <div class="app-container">
         <!-- 引入下載Excel組件 -->
         <DownloadExcel ref="downloadExcelRef" @download-complete="fetchVolunteersByDate" @download-error="error => alert(error)" :autoClosePrompt="autoClosePrompt" />
+        <OutputWord ref="outputWordRef" @success="handleSuccess" />
         <!-- 頂部藍色標題區域 -->
         <div class="header">
             <div class="header-content">
@@ -363,18 +488,41 @@ const autoSelectSchedule = async () => {
         <div class="page-container">
             <!-- 班表按鈕區域 - 包含自動選擇和手動上傳按鈕 -->
             <div class="button-container">
-                <button class="upload-button auto-button" @click="autoSelectSchedule" :disabled="isLoading">
-                    <span class="button-icon">🔄</span> 自動選擇班表
-                </button>
-                <button class="upload-button" @click="$refs.fileInput.click()">
-                    <span class="button-icon">📄</span> 手動上傳班表
-                </button>
-                <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden-input" />
-                <div v-if="fileName" class="file-name">
-                    <span class="file-icon">📋</span> {{ fileName }}
+                <div class="left-buttons">
+                    <button class="upload-button auto-button" @click="autoSelectSchedule" :disabled="isLoading">
+                        <span class="button-icon">🔄</span> 自動選擇班表
+                    </button>
+                    <button class="upload-button" @click="$refs.fileInput.click()">
+                        <span class="button-icon">📄</span> 手動上傳班表
+                    </button>
+                    <div class="file-info-container">
+                        <div v-if="isLoading" class="loading-indicator">
+                            <span class="loading-icon">⏳</span> 正在載入班表...
+                        </div>
+                        <div v-else-if="fileName" class="file-name">
+                            <span class="file-icon">📄</span> {{ fileName }}
+                        </div>
+                    </div>
                 </div>
-                <div v-if="isLoading" class="loading-indicator">
-                    <span class="loading-icon">⏳</span> 正在載入班表...
+                <div class="right-buttons">
+                    <div class="venue-selection">
+                        <label class="checkbox-label">
+                            <input type="checkbox" v-model="isPreTraining">
+                            <span>前訓</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" v-model="selectedVenue" value="雲科場">
+                            <span>雲科場</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" v-model="selectedVenue" value="林內場">
+                            <span>林內場</span>
+                        </label>
+                    </div>
+                    <button class="upload-button" @click="exportAttendanceSheet" :disabled="!selectedDate || !selectedVenue || (!yunVolunteers && !linVolunteers)">
+                        <span class="button-icon">📝</span> 匯出簽到表
+                    </button>
+                    <input type="file" ref="fileInput" @change="handleFileUpload" class="hidden-input" />
                 </div>
             </div>
 
@@ -473,7 +621,7 @@ const autoSelectSchedule = async () => {
 
                         <div class="results-section">
                             <h3 class="results-title">
-                                <span class="label-icon">👥</span> 志工列表：
+                                <span class="label-icon">👥</span> 志工列表：({{ filteredVolunteers.split('\n').filter(line => line && !line.endsWith('：')).length }}人)
                             </h3>
                             <textarea 
                                 v-model="filteredVolunteers" 
@@ -526,8 +674,8 @@ html, body {
     border-radius: 30px;
     max-width: 1500px; /* 設定最大寬度 */
     width: 100%; /* 確保全寬 */
-    margin: 20px auto; /* 整個應用容器水平置中，上下間距 */
-    min-height: calc(100vh - 40px); /* 留出上下邊距 */
+    margin: 30px auto; /* 水平置中，添加上下邊距 */
+    min-height: calc(100vh - 40px); /* 調整高度以適應上下邊距 */
     box-shadow: 0 0 30px rgba(0, 0, 0, 0.1); /* 增加陰影提升視覺層次 */
 }
 
@@ -588,12 +736,42 @@ html, body {
 
 /* 手動上傳班表按鈕區域 */
 .button-container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
     margin: 15px 0;
+    width: 100%;
+    max-width: 1400px;
+    justify-content: space-between;
+}
+
+.left-buttons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.right-buttons {
+    margin-left: auto;
     display: flex;
     align-items: center;
     gap: 15px;
-    width: 100%;
-    max-width: 1400px;
+}
+
+.venue-selection {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.venue-selection .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 14px;
+    color: #333;
 }
 
 /* Google試算表ID輸入框 */
@@ -638,7 +816,6 @@ html, body {
     font-weight: bold;
     box-shadow: 0 4px 10px rgba(255, 126, 95, 0.3);
     transition: transform 0.2s, box-shadow 0.2s;
-    margin-right: 10px;
 }
 
 .upload-button:hover {
@@ -701,16 +878,24 @@ html, body {
 }
 
 /* 檔名顯示樣式 */
+.file-info-container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+}
+
 .file-name {
     display: flex;
     align-items: center;
-    padding: 8px 16px;
+    padding: 6px 12px;
     background-color: #edf2f7;
     border-radius: 8px;
     color: #4a5568;
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
-    max-width: 800px;
+    max-width: 400px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -881,7 +1066,7 @@ html, body {
     color: #2c5282;
     border-left: 4px solid #4299e1;
     display: flex;
-    align-items: flex-start;
+    align-items: anchor-center;
 }
 
 .info-icon {
@@ -1148,7 +1333,7 @@ html, body {
 /* 響應式設計 */
 @media (max-width: 1600px) {
     .app-container {
-        max-width: 95%;
+        max-width: 100%;
     }
     
     .page-container, .header-content {
@@ -1160,7 +1345,7 @@ html, body {
     .app-container {
         max-width: 100%;
         border-radius: 0;
-        margin: 0; /* 移除邊距 */
+        margin: 0 auto; /* 移除邊距 */
         min-height: 100vh; /* 全高 */
     }
     
