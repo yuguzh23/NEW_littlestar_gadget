@@ -1,24 +1,24 @@
 <script setup>
 import { ref } from 'vue';
 import * as docx from 'docx';
-import littlestarImage from '../assets/images/littlestar.jpg';
 
-// 將圖片轉換為base64格式
-const getBase64Image = (imgPath) => {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(img, 0, 0);
-            const dataURL = canvas.toDataURL('image/jpeg');
-            resolve(dataURL.split(',')[1]);
-        };
-        img.onerror = () => reject(new Error('圖片加載失敗'));
-        img.src = imgPath;
-    });
+// 直接使用.jpg圖片文件而不是base64編碼
+// 導入圖片資源
+import littlestarImage from '../assets/images/images.png';
+
+// 圖片處理函數，用於讀取圖片文件
+const getImageFile = async () => {
+    try {
+        // 使用導入的圖片路徑
+        const response = await fetch(littlestarImage);
+        const arrayBuffer = await response.arrayBuffer();
+        return new Uint8Array(arrayBuffer);
+    } catch (error) {
+        console.error('獲取圖片文件失敗：', error);
+        // 提供更詳細的錯誤信息
+        console.error('圖片路徑：', littlestarImage);
+        throw new Error(`無法讀取圖片文件: ${error.message}`);
+    }
 };
 const emit = defineEmits(['success']);
 
@@ -159,31 +159,22 @@ const exportAttendanceSheet = async (selectedDate, yunVolunteers, linVolunteers,
                         ]
                     })
                 },
+                // 使用littlestar.jpg圖片作為頁尾
                 footers: {
                     default: new docx.Footer({
                         children: [
                             new docx.Paragraph({
                                 children: [
                                     new docx.ImageRun({
-                                        data: await getBase64Image(littlestarImage),
+                                        data: await getImageFile(),
                                         transformation: {
-                                            width: 300,
-                                            height: 65
-                                        },
-                                        floating: {
-                                            horizontalPosition: {
-                                                offset: 0,
-                                                align: docx.HorizontalPositionAlign.CENTER
-                                            },
-                                            verticalPosition: {
-                                                offset: -7000000,
-                                                align: docx.VerticalPositionAlign.BOTTOM
-                                            }
+                                            width: 206,
+                                            height: 59
                                         }
                                     })
                                 ],
                                 alignment: docx.AlignmentType.CENTER,
-                                spacing: { before: 200 }
+                                spacing: { before: 50 }
                             })
                         ]
                     })
@@ -194,16 +185,25 @@ const exportAttendanceSheet = async (selectedDate, yunVolunteers, linVolunteers,
             }]
         });
 
-        // 生成文檔
-        const blob = await docx.Packer.toBlob(doc);
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `小星星志工簽到表_${selectedDate}.docx`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
+        // 優化文檔生成邏輯
+        try {
+            // 直接使用toBlob方法，避免使用Node.js特有的Buffer功能
+            const blob = await docx.Packer.toBlob(doc);
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `小星星志工簽到表_${selectedDate}.docx`;
+            document.body.appendChild(link);
+            link.click();
+            // 確保資源被正確釋放
+            setTimeout(() => {
+                document.body.removeChild(link);
+                window.URL.revokeObjectURL(url);
+            }, 100);
+        } catch (innerError) {
+            console.error('生成文檔時發生錯誤：', innerError);
+            throw innerError;
+        }
 
         // 發送成功事件
         emit('success', '簽到表已成功匯出！');
@@ -283,6 +283,8 @@ const createSignatureTable = (volunteers) => {
 
     // 添加志工行
     pageVolunteers.forEach((volunteer, index) => {
+        // 計算實際序號，確保跨頁時序號連續
+        const actualIndex = startIndex + index;
         // 解析志工資訊，支援「姓名(綽號)-代號」格式，並移除代號
         let name = volunteer;
         let nickname = '';
@@ -309,9 +311,9 @@ const createSignatureTable = (volunteers) => {
                     new docx.TableCell({
                         children: [new docx.Paragraph({
                             spacing: { before: 120, after: 120 },
-                            children: [new docx.TextRun({ text: (index + 1).toString(), size: 28, bold: true, font: '微軟正黑體' })],
+                            children: [new docx.TextRun({ text: (actualIndex + 1).toString(), size: 28, bold: true, font: '微軟正黑體' })],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 1000, type: docx.WidthType.DXA },
+                        width: { size: 1200, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                     new docx.TableCell({
@@ -319,7 +321,7 @@ const createSignatureTable = (volunteers) => {
                             spacing: { before: 120, after: 120 },
                             children: [new docx.TextRun({ text: name, size: 28, bold: true, font: '微軟正黑體' })],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 2000, type: docx.WidthType.DXA },
+                        width: { size: 2200, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                     new docx.TableCell({
@@ -327,7 +329,7 @@ const createSignatureTable = (volunteers) => {
                             spacing: { before: 120, after: 120 },
                             children: [new docx.TextRun({ text: nickname, size: 28, bold: true, font: '微軟正黑體' })],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 2000, type: docx.WidthType.DXA },
+                        width: { size: 2200, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                     new docx.TableCell({
@@ -335,7 +337,7 @@ const createSignatureTable = (volunteers) => {
                             spacing: { before: 120, after: 120 },
                             children: [],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 2500, type: docx.WidthType.DXA },
+                        width: { size: 2600, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                     new docx.TableCell({
@@ -343,7 +345,7 @@ const createSignatureTable = (volunteers) => {
                             spacing: { before: 120, after: 120 }, 
                             children: [],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 2000, type: docx.WidthType.DXA },
+                        width: { size: 1900, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                     new docx.TableCell({
@@ -351,7 +353,7 @@ const createSignatureTable = (volunteers) => {
                             spacing: { before: 120, after: 120 }, 
                             children: [],
                             alignment: docx.AlignmentType.CENTER})],
-                        width: { size: 2000, type: docx.WidthType.DXA },
+                        width: { size: 1900, type: docx.WidthType.DXA },
                         verticalAlign: docx.VerticalAlign.CENTER
                     }),
                 ]
@@ -361,7 +363,7 @@ const createSignatureTable = (volunteers) => {
 
         const table = new docx.Table({
         rows: rows,
-        width: { size: 8500, type: docx.WidthType.DXA },
+        width: { size: 9500, type: docx.WidthType.DXA },
         borders: {
             top: { style: docx.BorderStyle.SINGLE, size: 4 },
             bottom: { style: docx.BorderStyle.SINGLE, size: 4 },
